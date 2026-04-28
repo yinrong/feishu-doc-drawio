@@ -71,65 +71,7 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 /feishu-doc 创建一个项目进度报告
 ```
 
-Claude 会分析对话内容，自动调用飞书 API 创建文档和画板，完成后返回可点击的飞书链接。
-
-### 直接调用脚本（不通过 Skill）
-
-也可以在终端直接运行 Python 脚本：
-
-```bash
-# 确保环境变量已设置
-export FEISHU_APP_ID="cli_xxxxxxxxxxxxx"
-export FEISHU_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
-
-# 创建文档
-python3 ~/.claude/skills/feishu-doc/scripts/feishu_api.py create-doc \
-  --title "报告" --content-file content.json
-
-# 创建画板
-python3 ~/.claude/skills/feishu-doc/scripts/feishu_api.py create-board \
-  --title "流程图" --nodes-file flowchart.json
-
-# 文档 + 画板一起创建
-python3 ~/.claude/skills/feishu-doc/scripts/feishu_api.py create-all \
-  --title "完整报告" --content-file content.json
-```
-
-### Content JSON 格式
-
-```json
-{
-  "blocks": [
-    {"type": "heading", "level": 1, "text": "项目概述"},
-    {"type": "text", "elements": [
-      {"text": "这是", "bold": false},
-      {"text": "重要内容", "bold": true}
-    ]},
-    {"type": "table", "headers": ["任务", "状态"], "rows": [
-      ["开发", "进行中"],
-      ["测试", "待开始"]
-    ]},
-    {"type": "board", "title": "架构图", "nodes": [
-      {"id": "n1", "shape": "round_rectangle", "text": "前端", "x": 100, "y": 100},
-      {"id": "n2", "shape": "rectangle", "text": "API", "x": 100, "y": 250},
-      {"id": "n3", "shape": "rectangle", "text": "数据库", "x": 100, "y": 400},
-      {"connect": ["n1", "n2"]},
-      {"connect": ["n2", "n3"]}
-    ]}
-  ]
-}
-```
-
-## 画板节点类型
-
-| shape_type | 说明 | 适用场景 |
-|---|---|---|
-| `round_rectangle` | 圆角矩形 | 开始/结束节点 |
-| `rectangle` | 矩形 | 处理步骤 |
-| `diamond` | 菱形 | 判断/条件 |
-| `ellipse` | 椭圆 | 状态节点 |
-| `triangle` | 三角形 | 警告/注意 |
-| `parallelogram` | 平行四边形 | 数据输入/输出 |
+Claude 会自动分析对话内容、调用飞书 API 创建文档和画板，完成后返回可点击的飞书链接。你不需要了解任何内部格式或 API 细节。
 
 ## 故障排查
 
