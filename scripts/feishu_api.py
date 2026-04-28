@@ -109,10 +109,12 @@ class FeishuDoc:
 
     def add_heading(self, doc_id, parent_id, text, level=1):
         block_type = 2 + level  # heading1=3, heading2=4, ...
+        field_name = f"heading{level}"
         return self._add_children(doc_id, parent_id, [{
             "block_type": block_type,
-            "heading": {
+            field_name: {
                 "elements": self._text_elements([text] if isinstance(text, str) else text),
+                "style": {},
             },
         }])
 
