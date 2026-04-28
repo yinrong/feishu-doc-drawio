@@ -1,18 +1,23 @@
 ---
 name: feishu-doc
-description: 通过飞书 API 直接创建文档（富文本+表格+可编辑画板），全自动无需手动粘贴
-allowed-tools: Read, Bash
+description: 生成飞书文档创建脚本（富文本+表格+可编辑画板），支持手动审查或自动运行
+allowed-tools: Read, Write, Bash
 ---
 
-通过飞书 Open API 创建文档和画板，支持富文本、表格、代码块、可编辑的飞书原生画板。
+生成 Python 脚本和内容文件，用于通过飞书 Open API 创建文档和画板。支持两种运行模式：手动审查后运行，或自动运行。
 
-## 前置条件
+## 运行模式
 
-环境变量必须已设置：
-- `FEISHU_APP_ID` — 飞书应用 App ID
-- `FEISHU_APP_SECRET` — 飞书应用 App Secret
+读取 `${CLAUDE_SKILL_DIR}/config.json` 判断模式：
 
-如果未设置，提示用户先配置。
+```json
+{"mode": "manual"}
+```
+
+- `manual`（默认）：生成文件后展示给用户审查，由用户手动运行
+- `auto`：生成文件后自动执行脚本
+
+如果 config.json 不存在或读取失败，按 `manual` 处理。
 
 ## 工作流程
 
@@ -32,7 +37,7 @@ allowed-tools: Read, Bash
 
 ### Step 2: 构建 JSON
 
-将内容组装为以下 JSON 格式：
+将内容组装为以下 JSON 格式，写入 `content.json`：
 
 ```json
 {
@@ -62,21 +67,65 @@ allowed-tools: Read, Bash
 }
 ```
 
-### Step 3: 调用脚本
+### Step 3: 生成文件
 
-将 JSON 写入临时文件，然后执行：
+在当前工作目录下创建 `feishu-output/` 目录（如已存在则覆盖内容），生成两个文件：
 
-```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/feishu_api.py" create-all \
-  --title "文档标题" \
-  --content-file /tmp/feishu_content.json
+**文件 1: `feishu-output/content.json`**
+
+上一步构建的 JSON 数据。
+
+**文件 2: `feishu-output/run.py`**
+
+最小 runner 脚本，复用共享库，不重复生成 API 代码：
+
+```python
+#!/usr/bin/env python3
+import sys, os, json
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/feishu-doc/scripts"))
+from feishu_api import FeishuAuth, process_blocks
+
+content_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content.json")
+with open(content_file) as f:
+    data = json.load(f)
+
+auth = FeishuAuth()
+results = process_blocks(auth, data["blocks"])
+print(json.dumps(results, ensure_ascii=False, indent=2))
 ```
 
-### Step 4: 返回结果
+使用 Write 工具写入这两个文件。
 
-解析脚本输出，向用户展示：
-- 文档链接（可直接点击打开飞书文档）
-- 画板链接（可直接点击打开飞书画板编辑）
+### Step 4: 根据模式执行
+
+**手动模式**：
+
+向用户展示：
+
+```
+已生成飞书文档创建文件：
+
+  feishu-output/content.json  — 文档内容（请审查）
+  feishu-output/run.py        — 运行脚本
+
+审查内容无误后，运行：
+
+  export FEISHU_APP_ID="your_app_id"
+  export FEISHU_APP_SECRET="your_app_secret"
+  python3 feishu-output/run.py
+```
+
+不要自动运行脚本。等待用户确认。
+
+**自动模式**：
+
+直接执行：
+
+```bash
+python3 feishu-output/run.py
+```
+
+解析输出，向用户展示文档链接和画板链接。
 
 ## 画板节点转换规则
 
@@ -102,6 +151,6 @@ python, java, javascript, typescript, go, rust, c, cpp, csharp, shell, bash, sql
 
 ## 错误处理
 
-- 如果环境变量未设置，输出配置指引
-- 如果 API 报权限不足，提示用户检查飞书应用权限（需要 `docx:document`, `board:whiteboard`, `drive:drive`）
+- 如果环境变量未设置（手动模式下），在输出的运行命令中提醒用户先 export 环境变量
+- 如果自动模式下 API 报权限不足，提示用户检查飞书应用权限（需要 `docx:document`, `board:whiteboard`, `drive:drive`）
 - 如果网络错误，显示具体错误信息并建议重试
