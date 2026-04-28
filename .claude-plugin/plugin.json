@@ -1,0 +1,13 @@
+{
+  "name": "feishu-doc",
+  "description": "Create Feishu documents with rich text, tables, and editable whiteboards via API",
+  "version": "1.0.0",
+  "author": {
+    "name": "yinrong"
+  },
+  "homepage": "https://github.com/yinrong/feishu-doc-drawio",
+  "repository": "https://github.com/yinrong/feishu-doc-drawio",
+  "license": "MIT",
+  "keywords": ["feishu", "lark", "document", "whiteboard", "api"],
+  "skills": "./"
+}
