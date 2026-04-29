@@ -81,6 +81,21 @@ class FeishuDoc:
             return data.get("data", {})
         raise RuntimeError(f"API error {path}: max retries exceeded")
 
+    def _patch(self, path, body=None, params=None, retries=3):
+        for attempt in range(retries):
+            resp = requests.patch(f"{BASE_URL}{path}", headers=self.auth.headers, json=body, params=params)
+            try:
+                data = resp.json()
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"API error {path}: empty response (status {resp.status_code})")
+            if data.get("code") != 0:
+                raise RuntimeError(f"API error {path}: {data}")
+            return data.get("data", {})
+        raise RuntimeError(f"API error {path}: max retries exceeded")
+
     def create_document(self, title, folder_token=None):
         body = {"title": title}
         if folder_token:
@@ -212,11 +227,14 @@ class FeishuDoc:
         }])
 
     MAX_TABLE_ROWS = 9  # Feishu API limit (including header row)
+    COL_WIDTH_MIN = 80
+    COL_WIDTH_MAX = 500
+    COL_WIDTH_PADDING = 32  # px added to the measured content width
 
     def add_table(self, doc_id, parent_id, headers, rows):
         """Create a table. Auto-splits into multiple sub-tables when rows exceed
         the Feishu API limit (9 rows including header). Each sub-table repeats
-        the header row."""
+        the header row and gets column widths auto-fitted to its content."""
         if len(rows) + 1 > self.MAX_TABLE_ROWS:
             chunk = self.MAX_TABLE_ROWS - 1  # leave room for header
             ids = []
@@ -266,7 +284,62 @@ class FeishuDoc:
                     "text": {"elements": elements, "style": {}},
                 }])
 
+        # Auto-fit column widths based on content
+        widths = self._compute_column_widths(headers, rows)
+        for col_index, width in enumerate(widths):
+            self.update_table_column_width(doc_id, table_id, col_index, width)
+
         return table_id
+
+    @classmethod
+    def _compute_column_widths(cls, headers, rows):
+        """Estimate per-column pixel width from content.
+
+        Heuristic: CJK / wide chars count as 2 units, other chars as 1 unit;
+        one unit ~= 9px at default Feishu font size. Result is clamped to
+        [COL_WIDTH_MIN, COL_WIDTH_MAX] with COL_WIDTH_PADDING added."""
+        widths = []
+        for col_index in range(len(headers)):
+            max_units = cls._text_units(str(headers[col_index]))
+            for row in rows:
+                if col_index < len(row):
+                    max_units = max(max_units, cls._text_units(str(row[col_index])))
+            width = max_units * 9 + cls.COL_WIDTH_PADDING
+            width = max(cls.COL_WIDTH_MIN, min(cls.COL_WIDTH_MAX, int(width)))
+            widths.append(width)
+        return widths
+
+    @staticmethod
+    def _text_units(text):
+        """Count display-width units. Wide (CJK, fullwidth) chars count as 2."""
+        units = 0
+        for ch in text:
+            code = ord(ch)
+            # CJK ideographs, hiragana/katakana, hangul, fullwidth forms, CJK punctuation
+            if (0x4E00 <= code <= 0x9FFF or
+                0x3400 <= code <= 0x4DBF or
+                0x3000 <= code <= 0x303F or
+                0x3040 <= code <= 0x30FF or
+                0xAC00 <= code <= 0xD7AF or
+                0xFF00 <= code <= 0xFFEF):
+                units += 2
+            else:
+                units += 1
+        return units
+
+    def update_table_column_width(self, doc_id, table_block_id, column_index, width):
+        """Set a single column's width (pixels) on an existing table block."""
+        body = {
+            "update_table_property": {
+                "column_index": column_index,
+                "column_width": int(width),
+            },
+        }
+        return self._patch(
+            f"/docx/v1/documents/{doc_id}/blocks/{table_block_id}",
+            body=body,
+            params={"document_revision_id": -1},
+        )
 
 
 class FeishuBoard:
