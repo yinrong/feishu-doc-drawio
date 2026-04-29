@@ -1,4 +1,5 @@
 {
   "mode": "manual",
-  "output_dir": "./feishu-output"
+  "output_dir": "./feishu-output",
+  "default_owner_email": ""
 }

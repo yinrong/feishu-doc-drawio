@@ -89,6 +89,23 @@ class FeishuDoc:
         doc = data["document"]
         return doc["document_id"], doc.get("revision_id")
 
+    def transfer_owner(self, doc_id, email, remove_old_owner=False, old_owner_perm="full_access"):
+        """Transfer document ownership to the user identified by Feishu email.
+
+        Only email-based member_type is supported per project requirement.
+        """
+        if not email:
+            return
+        path = f"/drive/v1/permissions/{doc_id}/members/transfer_owner"
+        params = {
+            "type": "docx",
+            "need_notification": "true",
+            "remove_old_owner": "true" if remove_old_owner else "false",
+            "old_owner_perm": old_owner_perm,
+        }
+        body = {"member_type": "email", "member_id": email}
+        return self._post(path, body=body, params=params)
+
     def _add_children(self, doc_id, parent_id, children):
         return self._post(
             f"/docx/v1/documents/{doc_id}/blocks/{parent_id}/children",
@@ -407,14 +424,28 @@ class FeishuBoard:
         return id_map
 
 
-def process_blocks(auth, blocks, folder_token=None):
-    """Process a list of content blocks, creating docs and boards as needed."""
+def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
+    """Process a list of content blocks, creating docs and boards as needed.
+
+    When default_owner_email is provided, ownership of every created document
+    is transferred to that Feishu email immediately after creation.
+    """
     doc_client = FeishuDoc(auth)
     board_client = FeishuBoard(auth)
 
     doc_title = "Untitled"
     doc_id = None
     results = {"documents": [], "whiteboards": []}
+
+    def _create_doc_and_transfer(title):
+        new_id, _ = doc_client.create_document(title, folder_token)
+        url = f"https://bytedance.feishu.cn/docx/{new_id}"
+        entry = {"id": new_id, "title": title, "url": url}
+        if default_owner_email:
+            doc_client.transfer_owner(new_id, default_owner_email)
+            entry["owner"] = default_owner_email
+        results["documents"].append(entry)
+        return new_id
 
     for block in blocks:
         btype = block.get("type")
@@ -425,9 +456,7 @@ def process_blocks(auth, blocks, folder_token=None):
 
         # Lazily create document on first non-board block
         if doc_id is None and btype != "board":
-            doc_id, _ = doc_client.create_document(doc_title, folder_token)
-            doc_url = f"https://bytedance.feishu.cn/docx/{doc_id}"
-            results["documents"].append({"id": doc_id, "title": doc_title, "url": doc_url})
+            doc_id = _create_doc_and_transfer(doc_title)
 
         if btype == "heading":
             doc_client.add_heading(doc_id, doc_id, block.get("text", ""),
@@ -496,6 +525,7 @@ def main():
     p_doc = sub.add_parser("create-doc", help="Create a document with blocks")
     p_doc.add_argument("--title", required=True)
     p_doc.add_argument("--folder-token", default=None)
+    p_doc.add_argument("--owner-email", default=None, help="Transfer ownership to this Feishu email after creation")
     p_doc.add_argument("--content-json", help="JSON string of blocks array")
     p_doc.add_argument("--content-file", help="Path to JSON file with blocks array")
 
@@ -507,6 +537,7 @@ def main():
     p_all = sub.add_parser("create-all", help="Create document + whiteboards from blocks JSON")
     p_all.add_argument("--title", required=True)
     p_all.add_argument("--folder-token", default=None)
+    p_all.add_argument("--owner-email", default=None, help="Transfer ownership to this Feishu email after creation")
     p_all.add_argument("--content-json", help="JSON string of blocks array")
     p_all.add_argument("--content-file", help="Path to JSON file with blocks array")
     p_all.add_argument("--stdin", action="store_true", help="Read content JSON from stdin")
@@ -521,7 +552,7 @@ def main():
     if args.command == "create-doc":
         content = _load_content(args)
         blocks = [{"type": "document_title", "text": args.title}] + content.get("blocks", content if isinstance(content, list) else [])
-        results = process_blocks(auth, blocks, args.folder_token)
+        results = process_blocks(auth, blocks, args.folder_token, default_owner_email=args.owner_email)
         print(json.dumps(results, ensure_ascii=False, indent=2))
 
     elif args.command == "create-board":
@@ -535,7 +566,7 @@ def main():
         content = _load_content(args)
         blocks_list = content.get("blocks", content if isinstance(content, list) else [])
         blocks = [{"type": "document_title", "text": args.title}] + blocks_list
-        results = process_blocks(auth, blocks, args.folder_token)
+        results = process_blocks(auth, blocks, args.folder_token, default_owner_email=args.owner_email)
         print(json.dumps(results, ensure_ascii=False, indent=2))
 
 

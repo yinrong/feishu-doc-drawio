@@ -58,20 +58,26 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 
 安装完成后 **重启 Claude Code**。
 
-## 运行模式
+## 运行模式与默认所有人
 
 编辑 `~/.claude/skills/feishu-doc/config.json`：
 
 ```json
 {
-  "mode": "manual"
+  "mode": "manual",
+  "default_owner_email": "yourname@company.com"
 }
 ```
 
-| mode | 行为 |
+| 字段 | 说明 |
 |---|---|
-| `manual`（默认） | 生成文件后停下，你审查 `content.json` 后手动运行 `python3 feishu-output/run.py` |
-| `auto` | 生成文件后自动运行脚本，直接返回飞书链接 |
+| `mode: manual`（默认） | 生成文件后停下，你审查 `content.json` 后手动运行 `python3 feishu-output/run.py` |
+| `mode: auto` | 生成文件后自动运行脚本，直接返回飞书链接 |
+| `default_owner_email` | 文档创建后立即转移所有权给此邮箱（**必须是飞书企业邮箱**）。留空则不转移，文档归应用所有 |
+
+> **关于 default_owner_email**：飞书应用创建的文档默认归应用所有，企业用户无法在自己的云文档列表里直接看到。填写你的飞书邮箱后，每次创建文档会立即转给你，你就能在"我的文件"里看到。
+>
+> 只支持 **email 方式的 member_id**（飞书企业邮箱），不支持 openid / userid。
 
 **手动模式运行时**，需要先设置环境变量：
 
@@ -111,6 +117,9 @@ python3 feishu-output/run.py
 | `code: 99991663` 或 `permission denied` | 权限不足 | 检查 3 个权限是否已添加并审批通过 |
 | `code: 99991668` | 应用未发布 | 去版本管理创建版本并发布 |
 | `ModuleNotFoundError: feishu_api` | skill 安装路径不对 | 确认 clone 到了 `~/.claude/skills/feishu-doc/` |
+| `code: 1063002` | 文档所有权转移失败：调用方不是文档所有者 | 正常情况不会触发；如出现说明 API 权限异常 |
+| `code: 1063003` | 转移失败：目标用户不在可见范围 | 检查 `default_owner_email` 是否是本组织的飞书企业邮箱 |
+| `code: 1063001` | 转移失败：邮箱无效 | 核对 `default_owner_email` 拼写，确保是飞书注册邮箱 |
 
 ## License
 

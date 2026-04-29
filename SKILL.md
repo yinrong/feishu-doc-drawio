@@ -6,18 +6,25 @@ allowed-tools: Read, Write, Bash
 
 生成 Python 脚本和内容文件，用于通过飞书 Open API 创建文档和画板。支持两种运行模式：手动审查后运行，或自动运行。
 
-## 运行模式
+## 运行模式与配置
 
-读取 `${CLAUDE_SKILL_DIR}/config.json` 判断模式：
+读取 `${CLAUDE_SKILL_DIR}/config.json`：
 
 ```json
-{"mode": "manual"}
+{
+  "mode": "manual",
+  "default_owner_email": "someone@company.com"
+}
 ```
 
-- `manual`（默认）：生成文件后展示给用户审查，由用户手动运行
-- `auto`：生成文件后自动执行脚本
+- `mode`：
+  - `manual`（默认）：生成文件后展示给用户审查，由用户手动运行
+  - `auto`：生成文件后自动执行脚本
+- `default_owner_email`：文档创建后立即转移所有权给此飞书邮箱（必须是飞书企业邮箱）。空字符串或缺失则不转移。
 
-如果 config.json 不存在或读取失败，按 `manual` 处理。
+如果 config.json 不存在或读取失败，按 `manual` 处理、不转移所有权。
+
+`run.py` 会从 config 读取这些值并传给共享库，不要在生成的内容里重复写死。
 
 ## 工作流程
 
@@ -82,15 +89,23 @@ allowed-tools: Read, Write, Bash
 ```python
 #!/usr/bin/env python3
 import sys, os, json
-sys.path.insert(0, os.path.expanduser("~/.claude/skills/feishu-doc/scripts"))
+SKILL_DIR = os.path.expanduser("~/.claude/skills/feishu-doc")
+sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
 from feishu_api import FeishuAuth, process_blocks
+
+with open(os.path.join(SKILL_DIR, "config.json")) as f:
+    config = json.load(f)
 
 content_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content.json")
 with open(content_file) as f:
     data = json.load(f)
 
 auth = FeishuAuth()
-results = process_blocks(auth, data["blocks"])
+results = process_blocks(
+    auth,
+    data["blocks"],
+    default_owner_email=config.get("default_owner_email") or None,
+)
 print(json.dumps(results, ensure_ascii=False, indent=2))
 ```
 
