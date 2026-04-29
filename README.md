@@ -6,7 +6,7 @@ Claude Code Skill：生成飞书文档创建脚本，支持富文本、表格、
 
 - **富文本文档**：标题、加粗/斜体/链接、代码块、列表、引用、分割线
 - **表格**：自动创建并填充数据，表头加粗
-- **可编辑画板**：飞书原生 Whiteboard，支持形状、连线、文本，完全可在飞书中编辑
+- **可编辑画板**：飞书原生 Whiteboard，通过 PlantUML/Mermaid 源码生成，渲染为可独立编辑的画板节点
 
 ## 工作方式
 
@@ -35,6 +35,7 @@ feishu-output/
 |---|---|---|
 | `docx:document` | `docx:document` | 查看、编辑和管理新版文档 |
 | `board:whiteboard` | `board:whiteboard` | 查看、编辑和管理画板 |
+| `board:whiteboard:node:create` | `board:whiteboard:node:create` | 创建画板节点（PlantUML 写入所需） |
 | `drive:drive` | `drive:drive` | 查看、编辑和管理云空间文件 |
 
 5. 保存后，进入 **版本管理与发布** → 创建版本 → 申请发布

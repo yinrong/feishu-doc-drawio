@@ -301,127 +301,30 @@ class FeishuBoard:
         wb = data.get("whiteboard", {})
         return wb.get("whiteboard_id"), wb.get("url", "")
 
-    def add_nodes(self, whiteboard_id, nodes):
-        return self._post(f"/board/v1/whiteboards/{whiteboard_id}/nodes", {"nodes": nodes})
+    # Feishu currently only accepts whiteboard content via the PlantUML endpoint
+    # (per Feishu tech support). The older per-node / per-connector create API
+    # does not work for writing content to new whiteboards.
+    def add_plantuml(self, whiteboard_id, plant_uml_code,
+                     style_type=1, syntax_type=1, diagram_type=0):
+        """Render PlantUML (or Mermaid) source as editable whiteboard nodes.
 
-    def add_shape(self, wb_id, shape_type, x, y, w, h, text="",
-                  fill_color="#FFFFFF", border_color="#000000"):
-        node = {
-            "type": "shape",
-            "shape": {
-                "shape_type": shape_type,
-                "position": {"x": x, "y": y},
-                "width": w,
-                "height": h,
-                "style": {
-                    "fill_color": fill_color,
-                    "border_color": border_color,
-                    "border_width": 2,
-                    "border_style": "solid",
-                },
-            },
-        }
-        if text:
-            node["shape"]["text"] = {
-                "content": text,
-                "align": "center",
-                "text_style": {"font_size": 14, "font_color": "#000000"},
-            }
-        data = self.add_nodes(wb_id, [node])
-        nodes = data.get("nodes", [])
-        return nodes[0]["id"] if nodes else None
-
-    def add_connector(self, wb_id, start_id, end_id, label="",
-                      connector_type="straight", end_arrow="arrow"):
-        node = {
-            "type": "connector",
-            "connector": {
-                "start_object_id": start_id,
-                "end_object_id": end_id,
-                "connector_type": connector_type,
-                "style": {
-                    "stroke_color": "#000000",
-                    "stroke_width": 2,
-                    "start_arrow": "none",
-                    "end_arrow": end_arrow,
-                },
-            },
-        }
-        if label:
-            node["connector"]["text"] = {"content": label}
-        return self.add_nodes(wb_id, [node])
-
-    def add_text_node(self, wb_id, x, y, content, font_size=14):
-        node = {
-            "type": "text",
-            "text": {
-                "position": {"x": x, "y": y},
-                "content": content,
-                "style": {"font_size": font_size, "font_color": "#333333"},
-            },
-        }
-        data = self.add_nodes(wb_id, [node])
-        nodes = data.get("nodes", [])
-        return nodes[0]["id"] if nodes else None
-
-    def build_flowchart(self, wb_id, spec):
-        """Build a flowchart from a high-level spec.
-
-        spec format:
-        {
-            "nodes": [
-                {"id": "n1", "shape": "round_rectangle", "text": "Start", "x": 100, "y": 100,
-                 "w": 180, "h": 60, "fill": "#E8F5E9", "border": "#4CAF50"},
-                ...
-            ],
-            "connectors": [
-                {"from": "n1", "to": "n2", "label": "", "type": "straight"},
-                ...
-            ]
-        }
+        style_type: 1 = whiteboard (parsed to individual editable nodes),
+                    2 = classic (single re-editable image).
+        syntax_type: 1 = PlantUML, 2 = Mermaid.
+        diagram_type: 0 = auto-detect (GML superset must be set to 201).
         """
-        default_w = 180
-        default_h = 60
-        shape_colors = {
-            "round_rectangle": ("#E8F5E9", "#4CAF50"),
-            "rectangle": ("#E3F2FD", "#2196F3"),
-            "diamond": ("#FFF3E0", "#FF9800"),
-            "ellipse": ("#F3E5F5", "#9C27B0"),
-            "triangle": ("#FFEBEE", "#F44336"),
-            "parallelogram": ("#E0F7FA", "#00BCD4"),
+        if not plant_uml_code or not plant_uml_code.strip():
+            raise ValueError("plant_uml_code is empty")
+        body = {
+            "plant_uml_code": plant_uml_code,
+            "style_type": style_type,
+            "syntax_type": syntax_type,
+            "diagram_type": diagram_type,
         }
-
-        id_map = {}
-
-        for node in spec.get("nodes", []):
-            shape = node.get("shape", "rectangle")
-            fill, border = shape_colors.get(shape, ("#FFFFFF", "#000000"))
-            real_id = self.add_shape(
-                wb_id,
-                shape_type=shape,
-                x=node.get("x", 100),
-                y=node.get("y", 100),
-                w=node.get("w", default_w),
-                h=node.get("h", default_h),
-                text=node.get("text", ""),
-                fill_color=node.get("fill", fill),
-                border_color=node.get("border", border),
-            )
-            id_map[node["id"]] = real_id
-
-        for conn in spec.get("connectors", []):
-            src = id_map.get(conn["from"])
-            dst = id_map.get(conn["to"])
-            if src and dst:
-                self.add_connector(
-                    wb_id,
-                    start_id=src,
-                    end_id=dst,
-                    label=conn.get("label", ""),
-                    connector_type=conn.get("type", "straight"),
-                )
-
-        return id_map
+        return self._post(
+            f"/board/v1/whiteboards/{whiteboard_id}/nodes/plantuml",
+            body=body,
+        )
 
 
 def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
@@ -490,23 +393,21 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
 
         elif btype == "board":
             wb_title = block.get("title", "Whiteboard")
+            plantuml = block.get("plantuml", "").strip()
+            if not plantuml:
+                raise RuntimeError(
+                    f"board block '{wb_title}' is missing required 'plantuml' field. "
+                    f"Feishu whiteboards currently only accept content via PlantUML."
+                )
             wb_id, wb_url = board_client.create_whiteboard(wb_title)
+            board_client.add_plantuml(
+                wb_id,
+                plantuml,
+                style_type=block.get("style_type", 1),
+                syntax_type=block.get("syntax_type", 1),
+                diagram_type=block.get("diagram_type", 0),
+            )
             results["whiteboards"].append({"id": wb_id, "title": wb_title, "url": wb_url})
-
-            nodes_spec = block.get("nodes", [])
-            if nodes_spec:
-                flowchart_spec = {"nodes": [], "connectors": []}
-                for n in nodes_spec:
-                    if "connect" in n:
-                        flowchart_spec["connectors"].append({
-                            "from": n["connect"][0],
-                            "to": n["connect"][1],
-                            "label": n.get("label", ""),
-                            "type": n.get("type", "straight"),
-                        })
-                    else:
-                        flowchart_spec["nodes"].append(n)
-                board_client.build_flowchart(wb_id, flowchart_spec)
 
             # Add a link to the whiteboard in the document
             if doc_id:
@@ -529,10 +430,16 @@ def main():
     p_doc.add_argument("--content-json", help="JSON string of blocks array")
     p_doc.add_argument("--content-file", help="Path to JSON file with blocks array")
 
-    p_board = sub.add_parser("create-board", help="Create a whiteboard with nodes")
+    p_board = sub.add_parser("create-board", help="Create a whiteboard from PlantUML")
     p_board.add_argument("--title", required=True)
-    p_board.add_argument("--nodes-json", help="JSON string of flowchart spec")
-    p_board.add_argument("--nodes-file", help="Path to JSON file with flowchart spec")
+    p_board.add_argument("--plantuml", help="PlantUML source string")
+    p_board.add_argument("--plantuml-file", help="Path to file containing PlantUML source")
+    p_board.add_argument("--style-type", type=int, default=1,
+                         help="1=whiteboard nodes (editable, default), 2=classic single image")
+    p_board.add_argument("--syntax-type", type=int, default=1,
+                         help="1=PlantUML (default), 2=Mermaid")
+    p_board.add_argument("--diagram-type", type=int, default=0,
+                         help="0=auto-detect (default); see Feishu docs for all values")
 
     p_all = sub.add_parser("create-all", help="Create document + whiteboards from blocks JSON")
     p_all.add_argument("--title", required=True)
@@ -556,10 +463,21 @@ def main():
         print(json.dumps(results, ensure_ascii=False, indent=2))
 
     elif args.command == "create-board":
-        spec = _load_nodes(args)
+        if args.plantuml_file:
+            with open(args.plantuml_file) as f:
+                plantuml = f.read()
+        elif args.plantuml:
+            plantuml = args.plantuml
+        else:
+            raise SystemExit("create-board requires --plantuml or --plantuml-file")
         board = FeishuBoard(auth)
         wb_id, wb_url = board.create_whiteboard(args.title)
-        board.build_flowchart(wb_id, spec)
+        board.add_plantuml(
+            wb_id, plantuml,
+            style_type=args.style_type,
+            syntax_type=args.syntax_type,
+            diagram_type=args.diagram_type,
+        )
         print(json.dumps({"whiteboard_id": wb_id, "url": wb_url}, ensure_ascii=False, indent=2))
 
     elif args.command == "create-all":
@@ -579,15 +497,6 @@ def _load_content(args):
     if args.content_json:
         return json.loads(args.content_json)
     return {"blocks": []}
-
-
-def _load_nodes(args):
-    if args.nodes_file:
-        with open(args.nodes_file) as f:
-            return json.load(f)
-    if args.nodes_json:
-        return json.loads(args.nodes_json)
-    return {"nodes": [], "connectors": []}
 
 
 if __name__ == "__main__":

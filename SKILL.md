@@ -25,7 +25,7 @@ allowed-tools: Read, Write, Bash
 
 ### ✅ 正确做法
 
-解析 ASCII / 文字描述，识别出"节点"和"连线"，映射为 `board` 块：
+把图形意图翻译成 **PlantUML 源码**，放在 `board` 块的 `plantuml` 字段里。飞书只接受 PlantUML（或 Mermaid）作为画板输入，不再支持手工 nodes/connectors 格式。
 
 输入（对话中）：
 ```
@@ -36,16 +36,14 @@ allowed-tools: Read, Write, Bash
 
 输出（content.json）：
 ```json
-{"type": "board", "title": "系统架构", "nodes": [
-  {"id": "n1", "shape": "rectangle", "text": "前端", "x": 100, "y": 200},
-  {"id": "n2", "shape": "rectangle", "text": "API", "x": 350, "y": 200},
-  {"id": "n3", "shape": "rectangle", "text": "数据库", "x": 600, "y": 200},
-  {"connect": ["n1", "n2"]},
-  {"connect": ["n2", "n3"]}
-]}
+{
+  "type": "board",
+  "title": "系统架构",
+  "plantuml": "@startuml\n[前端] --> [API]\n[API] --> [数据库]\n@enduml"
+}
 ```
 
-**哪怕画不像、节点数很少、布局不完美，也必须用 `board`。** 不要因为"文字更简洁""ASCII 足够清楚"等理由退化。如果 API 报权限错误，直接把异常抛给用户，让用户去开通 `board:whiteboard` 权限。
+**哪怕画不像、节点数很少、PlantUML 不优美，也必须用 `board`。** 不要因为"文字更简洁""ASCII 足够清楚"等理由退化。如果 API 报权限错误，直接把异常抛给用户，让用户去开通 `board:whiteboard` 和 `board:whiteboard:node:create` 权限。
 
 ## 运行模式与配置
 
@@ -110,16 +108,27 @@ allowed-tools: Read, Write, Bash
     {"type": "quote", "text": "引用内容"},
     {"type": "divider"},
     {"type": "table", "headers": ["列1","列2"], "rows": [["a","b"],["c","d"]]},
-    {"type": "board", "title": "流程图名称", "nodes": [
-      {"id": "n1", "shape": "round_rectangle", "text": "开始", "x": 200, "y": 100, "w": 180, "h": 60},
-      {"id": "n2", "shape": "rectangle", "text": "处理", "x": 200, "y": 250},
-      {"id": "n3", "shape": "diamond", "text": "判断?", "x": 200, "y": 400, "w": 180, "h": 100},
-      {"connect": ["n1", "n2"], "label": ""},
-      {"connect": ["n2", "n3"], "label": "下一步"}
-    ]}
+    {
+      "type": "board",
+      "title": "流程图名称",
+      "plantuml": "@startuml\nstart\n:开始;\n:处理;\nif (条件?) then (是)\n  :下一步;\nelse (否)\n  :跳过;\nendif\nstop\n@enduml"
+    }
   ]
 }
 ```
+
+### PlantUML 备忘（常用场景）
+
+| 需要画的图 | PlantUML 写法 |
+|---|---|
+| 架构/组件图 | `@startuml\n[前端] --> [后端]\n[后端] --> [数据库]\n@enduml` |
+| 带标签的连线 | `[A] --> [B] : 调用` |
+| 流程图 | `@startuml\nstart\n:步骤A;\n:步骤B;\nif (条件?) then (是)\n  :分支1;\nelse (否)\n  :分支2;\nendif\nstop\n@enduml` |
+| 时序图 | `@startuml\nAlice -> Bob: 请求\nBob --> Alice: 响应\n@enduml` |
+| 思维导图 | `@startmindmap\n* 根\n** 子1\n** 子2\n@endmindmap` |
+| 类图 | `@startuml\nclass A\nclass B\nA --> B\n@enduml` |
+
+可选字段：`"syntax_type": 2` 切换为 Mermaid 语法；`"style_type"` 默认 1（生成可独立编辑的多节点），改为 2 则生成一张可重编辑源码的图片。
 
 ### Step 2.5: 自检（生成 content.json 前必做）
 
@@ -128,7 +137,11 @@ allowed-tools: Read, Write, Bash
 1. 是否有 `type` 为 `code` / `text` / `quote` 的块，其内容包含 `┌`、`─`、`│`、`└`、`┘`、`┐`、`▼`、`▲`、`◀`、`▶`、`←`、`→`、`↑`、`↓`、`+--`、`|`、`-->`、`<--` 中的任何 2 个字符？
 2. 是否有 `text` 块用文字描述"A → B"、"A 调用 B"、"A 连接到 B"这种节点关系？
 
-**只要命中任一条，立即把该块替换为 `board` 块**，然后重新自检。
+**只要命中任一条，立即把该块替换为 `board` 块（plantuml 字段）**，然后重新自检。
+
+同时检查 `board` 块：
+- `plantuml` 字段必须存在、非空、以 `@startuml`/`@startmindmap`/`@startmermaid` 等起始标记开头，以对应的 `@end...` 结束。
+- **绝不允许** `board` 块出现 `nodes` / `connectors` 字段 — 那是旧格式，现在只用 `plantuml`。
 
 ### Step 3: 生成文件
 
@@ -198,24 +211,19 @@ python3 feishu-output/run.py
 
 解析输出，向用户展示文档链接和画板链接。
 
-## 画板节点转换规则
+## ASCII → PlantUML 转换指引
 
-将对话中的 ASCII 图/流程图转换为画板节点的映射：
+识别对话中图形的意图后，选最合适的 PlantUML 图类型：
 
-| 图形元素 | 画板 shape_type | 默认颜色 |
+| 对话中的图形 | PlantUML 图类型 | 起始标签 |
 |---|---|---|
-| 开始/结束（圆角框） | `round_rectangle` | 绿色 #E8F5E9 |
-| 处理步骤（方框） | `rectangle` | 蓝色 #E3F2FD |
-| 判断/条件（菱形） | `diamond` | 橙色 #FFF3E0 |
-| 数据/IO（平行四边形） | `parallelogram` | 青色 #E0F7FA |
-| 圆形节点 | `ellipse` | 紫色 #F3E5F5 |
+| 架构图、组件/服务依赖 | 组件图 | `@startuml` + `[A] --> [B]` |
+| 从上到下的流程（含判断分支） | 活动图 | `@startuml\nstart ... stop\n@enduml` |
+| 调用顺序、请求/响应 | 时序图 | `@startuml\nAlice -> Bob\n@enduml` |
+| 层级树 / 概念拆解 | 思维导图 | `@startmindmap` + `* 根 ** 子` |
+| 实体关系 / 类继承 | 类图 | `@startuml\nclass A\nA --> B\n@enduml` |
 
-布局规则：
-- 垂直流程图：节点间 y 间距 150px，x 居中对齐
-- 水平流程图：节点间 x 间距 250px，y 居中对齐
-- 分支判断：向右/向下展开分支路径
-- 默认节点尺寸：180x60（菱形 180x100）
-- 不确定形状时，默认用 `rectangle`
+节点文案直接写中文，PlantUML 完全支持。遇到歧义（例如一张图既能当流程图也能当组件图）时，优先选更能表达"节点 + 连线"本质的组件图。
 
 ## 支持的代码语言
 
