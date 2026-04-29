@@ -154,3 +154,14 @@ python, java, javascript, typescript, go, rust, c, cpp, csharp, shell, bash, sql
 - 如果环境变量未设置（手动模式下），在输出的运行命令中提醒用户先 export 环境变量
 - 如果自动模式下 API 报权限不足，提示用户检查飞书应用权限（需要 `docx:document`, `board:whiteboard`, `drive:drive`）
 - 如果网络错误，显示具体错误信息并建议重试
+
+## 关键约束
+
+**画板禁止降级**：画板是产品刚需。如果画板创建 API 失败（通常是 `board:whiteboard` 权限未开通，返回 404），**必须停下并报错**，让用户去飞书开放平台开通权限。严禁降级为以下任何形式：
+
+- ❌ 在文档中嵌入 ASCII 图
+- ❌ 在文档中嵌入 draw.io XML 代码块
+- ❌ 以纯文本方式描述图形结构
+- ❌ 直接跳过画板块
+
+scripts/feishu_api.py 已经在画板 API 404 时给出清晰的错误信息，直接把异常抛给用户即可。

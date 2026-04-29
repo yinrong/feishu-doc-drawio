@@ -51,19 +51,35 @@ class FeishuDoc:
     def __init__(self, auth: FeishuAuth):
         self.auth = auth
 
-    def _post(self, path, body=None, params=None):
-        resp = requests.post(f"{BASE_URL}{path}", headers=self.auth.headers, json=body, params=params)
-        data = resp.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"API error {path}: {data}")
-        return data.get("data", {})
+    def _post(self, path, body=None, params=None, retries=3):
+        for attempt in range(retries):
+            resp = requests.post(f"{BASE_URL}{path}", headers=self.auth.headers, json=body, params=params)
+            try:
+                data = resp.json()
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"API error {path}: empty response (status {resp.status_code})")
+            if data.get("code") != 0:
+                raise RuntimeError(f"API error {path}: {data}")
+            return data.get("data", {})
+        raise RuntimeError(f"API error {path}: max retries exceeded")
 
-    def _get(self, path, params=None):
-        resp = requests.get(f"{BASE_URL}{path}", headers=self.auth.headers, params=params)
-        data = resp.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"API error {path}: {data}")
-        return data.get("data", {})
+    def _get(self, path, params=None, retries=3):
+        for attempt in range(retries):
+            resp = requests.get(f"{BASE_URL}{path}", headers=self.auth.headers, params=params)
+            try:
+                data = resp.json()
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"API error {path}: empty response (status {resp.status_code})")
+            if data.get("code") != 0:
+                raise RuntimeError(f"API error {path}: {data}")
+            return data.get("data", {})
+        raise RuntimeError(f"API error {path}: max retries exceeded")
 
     def create_document(self, title, folder_token=None):
         body = {"title": title}
@@ -178,10 +194,25 @@ class FeishuDoc:
             },
         }])
 
+    MAX_TABLE_ROWS = 9  # Feishu API limit (including header row)
+
     def add_table(self, doc_id, parent_id, headers, rows):
+        """Create a table. Auto-splits into multiple sub-tables when rows exceed
+        the Feishu API limit (9 rows including header). Each sub-table repeats
+        the header row."""
+        if len(rows) + 1 > self.MAX_TABLE_ROWS:
+            chunk = self.MAX_TABLE_ROWS - 1  # leave room for header
+            ids = []
+            for i in range(0, len(rows), chunk):
+                ids.append(self._add_table_single(doc_id, parent_id, headers, rows[i:i + chunk]))
+            return ids
+        return self._add_table_single(doc_id, parent_id, headers, rows)
+
+    def _add_table_single(self, doc_id, parent_id, headers, rows):
         row_count = len(rows) + 1  # +1 for header
         col_count = len(headers)
 
+        time.sleep(0.5)
         result = self._add_children(doc_id, parent_id, [{
             "block_type": 31,
             "table": {
@@ -225,12 +256,28 @@ class FeishuBoard:
     def __init__(self, auth: FeishuAuth):
         self.auth = auth
 
-    def _post(self, path, body=None):
-        resp = requests.post(f"{BASE_URL}{path}", headers=self.auth.headers, json=body)
-        data = resp.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"Board API error {path}: {data}")
-        return data.get("data", {})
+    def _post(self, path, body=None, retries=3):
+        for attempt in range(retries):
+            resp = requests.post(f"{BASE_URL}{path}", headers=self.auth.headers, json=body)
+            if resp.status_code == 404:
+                raise RuntimeError(
+                    f"Board API 404 at {path}: 应用未开通 board:whiteboard 权限。"
+                    f"请去飞书开放平台 → 应用 → 权限管理 添加权限后重新发布。"
+                )
+            try:
+                data = resp.json()
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise RuntimeError(
+                    f"Board API error {path}: parse error "
+                    f"(status {resp.status_code}, body={resp.text[:200]})"
+                )
+            if data.get("code") != 0:
+                raise RuntimeError(f"Board API error {path}: {data}")
+            return data.get("data", {})
+        raise RuntimeError(f"Board API error {path}: max retries exceeded")
 
     def create_whiteboard(self, title):
         data = self._post("/board/v1/whiteboards", {"title": title})
