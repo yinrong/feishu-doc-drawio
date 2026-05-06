@@ -29,12 +29,11 @@ feishu-output/
 1. 打开 [飞书开放平台](https://open.feishu.cn)，登录后进入 **开发者后台**
 2. 点击 **创建企业自建应用**（如果已有应用可跳过）
 3. 进入应用 → 左侧菜单 **权限管理** → 点击 **添加权限**
-4. 搜索并勾选以下 3 个权限：
+4. 搜索并勾选以下权限：
 
 | 权限 scope | 在搜索框中搜索 | 说明 |
 |---|---|---|
 | `docx:document` | `docx:document` | 查看、编辑和管理新版文档 |
-| `board:whiteboard` | `board:whiteboard` | 查看、编辑和管理画板 |
 | `board:whiteboard:node:create` | `board:whiteboard:node:create` | 创建画板节点（PlantUML 写入所需） |
 | `drive:drive` | `drive:drive` | 查看、编辑和管理云空间文件 |
 
@@ -115,8 +114,10 @@ python3 feishu-output/run.py
 |---|---|---|
 | `FEISHU_APP_ID and FEISHU_APP_SECRET must be set` | 环境变量未配置 | 手动模式：运行前 export；自动模式：检查 settings.json |
 | `Auth failed` | App ID 或 Secret 错误 | 去飞书开放平台 → 凭证与基础信息 页面核对 |
-| `code: 99991663` 或 `permission denied` | 权限不足 | 检查 3 个权限是否已添加并审批通过 |
+| `code: 99991663` 或 `permission denied` | 权限不足 | 检查权限是否已添加并审批通过 |
 | `code: 99991668` | 应用未发布 | 去版本管理创建版本并发布 |
+| `code: 2890005` (forbidden) | 画板写入权限不足 | 确认已开通 `board:whiteboard:node:create` 权限 |
+| `Cannot extract whiteboard token` | 文档内嵌画板未返回 token | 可能是飞书版本不支持，联系管理员 |
 | `ModuleNotFoundError: feishu_api` | skill 安装路径不对 | 确认 clone 到了 `~/.claude/skills/feishu-doc/` |
 | `code: 1063002` | 文档所有权转移失败：调用方不是文档所有者 | 正常情况不会触发；如出现说明 API 权限异常 |
 | `code: 1063003` | 转移失败：目标用户不在可见范围 | 检查 `default_owner_email` 是否是本组织的飞书企业邮箱 |

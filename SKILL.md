@@ -232,5 +232,5 @@ python, java, javascript, typescript, go, rust, c, cpp, csharp, shell, bash, sql
 ## 错误处理
 
 - 如果环境变量未设置（手动模式下），在输出的运行命令中提醒用户先 export 环境变量
-- 如果自动模式下 API 报权限不足（画板 404），**原样把错误抛给用户**，让用户去飞书开放平台开通 `board:whiteboard` 权限。不要改 content.json 绕过。
+- 如果自动模式下 API 报权限不足，**原样把错误抛给用户**，让用户去飞书开放平台开通 `board:whiteboard:node:create` 权限。不要改 content.json 绕过。
 - 如果网络错误，显示具体错误信息并建议重试

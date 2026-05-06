@@ -341,19 +341,44 @@ class FeishuDoc:
             params={"document_revision_id": -1},
         )
 
+    def add_whiteboard(self, doc_id, parent_id):
+        """Create an embedded whiteboard block (type 43) inside the document.
+
+        Returns the whiteboard_id (token) that can be used with the
+        board:whiteboard:node:create API (create_plantuml).
+        """
+        time.sleep(0.5)
+        result = self._add_children(doc_id, parent_id, [{"block_type": 43, "board": {}}])
+        children = result.get("children", [])
+        wb_block = None
+        for child in children:
+            if child.get("block_type") == 43:
+                wb_block = child
+                break
+        if not wb_block:
+            raise RuntimeError("Whiteboard block not found in response")
+        token = wb_block.get("board", {}).get("token", "")
+        if not token:
+            raise RuntimeError(
+                f"Cannot extract whiteboard token from block. "
+                f"Response: {json.dumps(wb_block, ensure_ascii=False)[:500]}"
+            )
+        return token
+
 
 class FeishuBoard:
+    """Writes PlantUML/Mermaid content to whiteboards embedded in documents.
+
+    Uses the create_plantuml endpoint which only requires
+    board:whiteboard:node:create permission (not board:whiteboard).
+    """
+
     def __init__(self, auth: FeishuAuth):
         self.auth = auth
 
     def _post(self, path, body=None, retries=3):
         for attempt in range(retries):
             resp = requests.post(f"{BASE_URL}{path}", headers=self.auth.headers, json=body)
-            if resp.status_code == 404:
-                raise RuntimeError(
-                    f"Board API 404 at {path}: 应用未开通 board:whiteboard 权限。"
-                    f"请去飞书开放平台 → 应用 → 权限管理 添加权限后重新发布。"
-                )
             try:
                 data = resp.json()
             except Exception:
@@ -369,23 +394,8 @@ class FeishuBoard:
             return data.get("data", {})
         raise RuntimeError(f"Board API error {path}: max retries exceeded")
 
-    def create_whiteboard(self, title):
-        data = self._post("/board/v1/whiteboards", {"title": title})
-        wb = data.get("whiteboard", {})
-        return wb.get("whiteboard_id"), wb.get("url", "")
-
-    # Feishu currently only accepts whiteboard content via the PlantUML endpoint
-    # (per Feishu tech support). The older per-node / per-connector create API
-    # does not work for writing content to new whiteboards.
     def add_plantuml(self, whiteboard_id, plant_uml_code,
                      style_type=1, syntax_type=1, diagram_type=0):
-        """Render PlantUML (or Mermaid) source as editable whiteboard nodes.
-
-        style_type: 1 = whiteboard (parsed to individual editable nodes),
-                    2 = classic (single re-editable image).
-        syntax_type: 1 = PlantUML, 2 = Mermaid.
-        diagram_type: 0 = auto-detect (GML superset must be set to 201).
-        """
         if not plant_uml_code or not plant_uml_code.strip():
             raise ValueError("plant_uml_code is empty")
         body = {
@@ -403,6 +413,10 @@ class FeishuBoard:
 def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
     """Process a list of content blocks, creating docs and boards as needed.
 
+    Board blocks are created as embedded whiteboards (block_type 43) inside the
+    document, then populated via create_plantuml. This only requires
+    docx:document + board:whiteboard:node:create permissions.
+
     When default_owner_email is provided, ownership of every created document
     is transferred to that Feishu email immediately after creation.
     """
@@ -411,7 +425,7 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
 
     doc_title = "Untitled"
     doc_id = None
-    results = {"documents": [], "whiteboards": []}
+    results = {"documents": [], "boards": []}
 
     def _create_doc_and_transfer(title):
         new_id, _ = doc_client.create_document(title, folder_token)
@@ -423,6 +437,12 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
         results["documents"].append(entry)
         return new_id
 
+    def _ensure_doc():
+        nonlocal doc_id
+        if doc_id is None:
+            doc_id = _create_doc_and_transfer(doc_title)
+        return doc_id
+
     for block in blocks:
         btype = block.get("type")
 
@@ -430,41 +450,46 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
             doc_title = block.get("text", "Untitled")
             continue
 
-        # Lazily create document on first non-board block
-        if doc_id is None and btype != "board":
-            doc_id = _create_doc_and_transfer(doc_title)
-
         if btype == "heading":
+            _ensure_doc()
             doc_client.add_heading(doc_id, doc_id, block.get("text", ""),
                                    level=block.get("level", 1))
 
         elif btype == "text":
+            _ensure_doc()
             elements = block.get("elements", block.get("text", ""))
             doc_client.add_text(doc_id, doc_id, elements)
 
         elif btype == "code":
+            _ensure_doc()
             doc_client.add_code_block(doc_id, doc_id,
                                       block.get("content", ""),
                                       block.get("language", "plain"))
 
         elif btype == "bullet_list":
+            _ensure_doc()
             doc_client.add_bullet_list(doc_id, doc_id, block.get("items", []))
 
         elif btype == "ordered_list":
+            _ensure_doc()
             doc_client.add_ordered_list(doc_id, doc_id, block.get("items", []))
 
         elif btype == "quote":
+            _ensure_doc()
             doc_client.add_quote(doc_id, doc_id, block.get("elements", block.get("text", "")))
 
         elif btype == "divider":
+            _ensure_doc()
             doc_client.add_divider(doc_id, doc_id)
 
         elif btype == "table":
+            _ensure_doc()
             doc_client.add_table(doc_id, doc_id,
                                  block.get("headers", []),
                                  block.get("rows", []))
 
         elif btype == "board":
+            _ensure_doc()
             wb_title = block.get("title", "Whiteboard")
             plantuml = block.get("plantuml", "").strip()
             if not plantuml:
@@ -472,7 +497,7 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
                     f"board block '{wb_title}' is missing required 'plantuml' field. "
                     f"Feishu whiteboards currently only accept content via PlantUML."
                 )
-            wb_id, wb_url = board_client.create_whiteboard(wb_title)
+            wb_id = doc_client.add_whiteboard(doc_id, doc_id)
             board_client.add_plantuml(
                 wb_id,
                 plantuml,
@@ -480,41 +505,16 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
                 syntax_type=block.get("syntax_type", 1),
                 diagram_type=block.get("diagram_type", 0),
             )
-            results["whiteboards"].append({"id": wb_id, "title": wb_title, "url": wb_url})
-
-            # Add a link to the whiteboard in the document
-            if doc_id:
-                doc_client.add_text(doc_id, doc_id, [
-                    {"text": f"📋 画板: {wb_title} → ", "bold": True},
-                    {"text": wb_url, "link": wb_url},
-                ])
+            results["boards"].append({"whiteboard_id": wb_id, "title": wb_title})
 
     return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Feishu document and whiteboard creator")
+    parser = argparse.ArgumentParser(description="Feishu document creator (text + table + embedded whiteboard)")
     sub = parser.add_subparsers(dest="command")
 
-    p_doc = sub.add_parser("create-doc", help="Create a document with blocks")
-    p_doc.add_argument("--title", required=True)
-    p_doc.add_argument("--folder-token", default=None)
-    p_doc.add_argument("--owner-email", default=None, help="Transfer ownership to this Feishu email after creation")
-    p_doc.add_argument("--content-json", help="JSON string of blocks array")
-    p_doc.add_argument("--content-file", help="Path to JSON file with blocks array")
-
-    p_board = sub.add_parser("create-board", help="Create a whiteboard from PlantUML")
-    p_board.add_argument("--title", required=True)
-    p_board.add_argument("--plantuml", help="PlantUML source string")
-    p_board.add_argument("--plantuml-file", help="Path to file containing PlantUML source")
-    p_board.add_argument("--style-type", type=int, default=1,
-                         help="1=whiteboard nodes (editable, default), 2=classic single image")
-    p_board.add_argument("--syntax-type", type=int, default=1,
-                         help="1=PlantUML (default), 2=Mermaid")
-    p_board.add_argument("--diagram-type", type=int, default=0,
-                         help="0=auto-detect (default); see Feishu docs for all values")
-
-    p_all = sub.add_parser("create-all", help="Create document + whiteboards from blocks JSON")
+    p_all = sub.add_parser("create", help="Create document with all block types from JSON")
     p_all.add_argument("--title", required=True)
     p_all.add_argument("--folder-token", default=None)
     p_all.add_argument("--owner-email", default=None, help="Transfer ownership to this Feishu email after creation")
@@ -529,31 +529,7 @@ def main():
 
     auth = FeishuAuth()
 
-    if args.command == "create-doc":
-        content = _load_content(args)
-        blocks = [{"type": "document_title", "text": args.title}] + content.get("blocks", content if isinstance(content, list) else [])
-        results = process_blocks(auth, blocks, args.folder_token, default_owner_email=args.owner_email)
-        print(json.dumps(results, ensure_ascii=False, indent=2))
-
-    elif args.command == "create-board":
-        if args.plantuml_file:
-            with open(args.plantuml_file) as f:
-                plantuml = f.read()
-        elif args.plantuml:
-            plantuml = args.plantuml
-        else:
-            raise SystemExit("create-board requires --plantuml or --plantuml-file")
-        board = FeishuBoard(auth)
-        wb_id, wb_url = board.create_whiteboard(args.title)
-        board.add_plantuml(
-            wb_id, plantuml,
-            style_type=args.style_type,
-            syntax_type=args.syntax_type,
-            diagram_type=args.diagram_type,
-        )
-        print(json.dumps({"whiteboard_id": wb_id, "url": wb_url}, ensure_ascii=False, indent=2))
-
-    elif args.command == "create-all":
+    if args.command == "create":
         content = _load_content(args)
         blocks_list = content.get("blocks", content if isinstance(content, list) else [])
         blocks = [{"type": "document_title", "text": args.title}] + blocks_list
