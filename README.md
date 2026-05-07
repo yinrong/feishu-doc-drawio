@@ -10,17 +10,13 @@ Claude Code Skill：生成飞书文档创建脚本，支持富文本、表格、
 
 ## 工作方式
 
-调用 `/feishu-doc` 后，Claude 会在当前目录生成 `feishu-output/` 文件夹：
+调用 `/feishu-doc` 后，Claude 会在当前目录生成 `feishu-output/run.py` —— 一个自包含的 Python 脚本，blocks 数据以 Python 列表的形式直接写在脚本里。
 
-```
-feishu-output/
-  content.json   ← 文档内容（你需要审查这个）
-  run.py         ← 运行脚本（调用共享库，不含重复代码）
-```
-
-你审查 `content.json` 无误后，运行 `python3 feishu-output/run.py` 即可创建飞书文档。
+你审查 `run.py` 中的 blocks 列表无误后，运行 `python3 feishu-output/run.py` 即可创建飞书文档。
 
 也可以配置为自动运行（见下方"运行模式"）。
+
+> 早期版本会生成单独的 `content.json` 文件，但中文文本里的 ASCII `"` 经常导致 JSON 解析失败。现在 blocks 直接写成 Python 字面量，不存在转义问题。
 
 ## 安装
 
@@ -36,6 +32,7 @@ feishu-output/
 | `docx:document` | `docx:document` | 查看、编辑和管理新版文档 |
 | `board:whiteboard:node:create` | `board:whiteboard:node:create` | 创建画板节点（PlantUML 写入所需） |
 | `drive:drive` | `drive:drive` | 查看、编辑和管理云空间文件 |
+| `contact:user.id:readonly` | `contact:user.id:readonly` | **可选**，仅在 `default_owner` 用 `phone:` 前缀时需要 |
 
 5. 保存后，进入 **版本管理与发布** → 创建版本 → 申请发布
 6. 需要企业管理员在 **飞书管理后台** 审批通过
@@ -65,19 +62,34 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 ```json
 {
   "mode": "manual",
-  "default_owner_email": "yourname@company.com"
+  "default_owner": "phone:18800001234"
 }
 ```
 
 | 字段 | 说明 |
 |---|---|
-| `mode: manual`（默认） | 生成文件后停下，你审查 `content.json` 后手动运行 `python3 feishu-output/run.py` |
+| `mode: manual`（默认） | 生成文件后停下，你审查 `run.py` 中的 blocks 后手动运行 `python3 feishu-output/run.py` |
 | `mode: auto` | 生成文件后自动运行脚本，直接返回飞书链接 |
-| `default_owner_email` | 文档创建后立即转移所有权给此邮箱（**必须是飞书企业邮箱**）。留空则不转移，文档归应用所有 |
+| `default_owner` | 文档创建后立即转移所有权给此用户。支持多种格式（见下） |
 
-> **关于 default_owner_email**：飞书应用创建的文档默认归应用所有，企业用户无法在自己的云文档列表里直接看到。填写你的飞书邮箱后，每次创建文档会立即转给你，你就能在"我的文件"里看到。
+### `default_owner` 格式
+
+| 前缀 | 示例 | 说明 |
+|---|---|---|
+| `email:` | `email:user@company.com` | 飞书企业邮箱（最直接） |
+| `phone:` | `phone:18800001234` | 手机号（需开通 `contact:user.id:readonly`，自动查 open_id 后转移）|
+| `openid:` | `openid:ou_xxxx` | 飞书 open_id |
+| `userid:` | `userid:xxxx` | 飞书 user_id |
+| `unionid:` | `unionid:on_xxxx` | 飞书 union_id |
+| 无前缀 | `user@company.com` | 默认按 email 处理（向后兼容） |
+
+留空则不转移，文档归应用所有。
+
+> **背景**：飞书应用创建的文档默认归应用所有，企业用户无法在自己的云文档列表里直接看到。配置 `default_owner` 后，每次创建文档会立即转给你，你就能在"我的文件"里看到。
 >
-> 只支持 **email 方式的 member_id**（飞书企业邮箱），不支持 openid / userid。
+> 转移失败**不会让脚本崩溃** —— 文档已创建，URL 会正常返回，失败信息以 `owner_transfer_warning` 字段附在 results 里。
+
+> 兼容性：旧的 `default_owner_email` 字段仍然支持（按 email 处理），但建议改用 `default_owner`。
 
 **手动模式运行时**，需要先设置环境变量：
 
@@ -110,6 +122,8 @@ python3 feishu-output/run.py
 
 ## 故障排查
 
+所有权转移类问题（`code 1063xxx`、`Cannot resolve phone ...`）现在是非致命的 —— 文档创建成功后才尝试转移，失败信息以 `owner_transfer_warning` 字段附在 results 里，不会让脚本退出。
+
 | 报错 | 原因 | 解决 |
 |---|---|---|
 | `FEISHU_APP_ID and FEISHU_APP_SECRET must be set` | 环境变量未配置 | 手动模式：运行前 export；自动模式：检查 settings.json |
@@ -119,9 +133,11 @@ python3 feishu-output/run.py
 | `code: 2890005` (forbidden) | 画板写入权限不足 | 确认已开通 `board:whiteboard:node:create` 权限 |
 | `Cannot extract whiteboard token` | 文档内嵌画板未返回 token | 可能是飞书版本不支持，联系管理员 |
 | `ModuleNotFoundError: feishu_api` | skill 安装路径不对 | 确认 clone 到了 `~/.claude/skills/feishu-doc/` |
-| `code: 1063002` | 文档所有权转移失败：调用方不是文档所有者 | 正常情况不会触发；如出现说明 API 权限异常 |
-| `code: 1063003` | 转移失败：目标用户不在可见范围 | 检查 `default_owner_email` 是否是本组织的飞书企业邮箱 |
-| `code: 1063001` | 转移失败：邮箱无效 | 核对 `default_owner_email` 拼写，确保是飞书注册邮箱 |
+| `Cannot resolve phone xxx`（warning） | `phone:` 配置查不到对应飞书用户 | 确认手机号在该企业飞书内注册；或改用 `openid:` |
+| `code: 99991672 ... contact:user.id:readonly`（warning） | `phone:` 模式缺少联系人查询权限 | 开通 `contact:user.id:readonly` 权限并重新发布；或改用 `email:` / `openid:` |
+| `code: 1063002`（warning） | 文档所有权转移失败：调用方不是文档所有者 | 正常情况不会触发；文档仍归应用所有 |
+| `code: 1063003`（warning） | 转移失败：目标用户不在可见范围 | 检查 `default_owner` 指向的用户是否本组织成员 |
+| `code: 1063001`（warning） | 转移失败：邮箱无效 | 核对邮箱拼写；个人邮箱（@163/@126/@qq）通常不被飞书接受 |
 
 ## License
 

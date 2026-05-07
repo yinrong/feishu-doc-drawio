@@ -104,13 +104,62 @@ class FeishuDoc:
         doc = data["document"]
         return doc["document_id"], doc.get("revision_id")
 
-    def transfer_owner(self, doc_id, email, remove_old_owner=False, old_owner_perm="full_access"):
-        """Transfer document ownership to the user identified by Feishu email.
+    def lookup_open_id_by_phone(self, phone):
+        """Resolve a mobile number to its open_id via /contact/v3/users/batch_get_id.
 
-        Only email-based member_type is supported per project requirement.
+        Required because the transfer_owner API does not accept member_type=phone.
         """
-        if not email:
+        data = self._post(
+            "/contact/v3/users/batch_get_id",
+            body={"mobiles": [str(phone)]},
+            params={"user_id_type": "open_id"},
+        )
+        user_list = data.get("user_list", [])
+        if not user_list or not user_list[0].get("user_id"):
+            raise RuntimeError(f"Cannot resolve phone {phone} to a Feishu user (not found in this tenant)")
+        return user_list[0]["user_id"]
+
+    def _parse_owner_spec(self, owner_spec):
+        """Parse 'email:xxx' / 'phone:xxx' / 'openid:xxx' / 'userid:xxx' / 'unionid:xxx'.
+
+        Bare values without a prefix are treated as email (backward compat).
+        Phone values are resolved to open_id via a contact API lookup.
+        Returns (member_type, member_id).
+        """
+        spec = owner_spec.strip()
+        if ":" not in spec:
+            return "email", spec  # backward compat
+        kind, value = spec.split(":", 1)
+        kind = kind.strip().lower()
+        value = value.strip()
+        if kind in ("phone", "mobile"):
+            return "openid", self.lookup_open_id_by_phone(value)
+        if kind == "email":
+            return "email", value
+        if kind in ("openid", "open_id"):
+            return "openid", value
+        if kind in ("userid", "user_id"):
+            return "userid", value
+        if kind in ("unionid", "union_id"):
+            return "unionid", value
+        raise ValueError(
+            f"Unknown owner spec type '{kind}' (supported: email, phone, openid, userid, unionid)"
+        )
+
+    def transfer_owner(self, doc_id, owner_spec, remove_old_owner=False, old_owner_perm="full_access"):
+        """Transfer document ownership.
+
+        owner_spec accepts:
+          - 'email:user@company.com'
+          - 'phone:18800001234' (resolved to open_id internally)
+          - 'openid:ou_xxxx'
+          - 'userid:xxxx'
+          - 'unionid:on_xxxx'
+          - bare 'user@company.com' (treated as email for backward compat)
+        """
+        if not owner_spec:
             return
+        member_type, member_id = self._parse_owner_spec(owner_spec)
         path = f"/drive/v1/permissions/{doc_id}/members/transfer_owner"
         params = {
             "type": "docx",
@@ -118,7 +167,7 @@ class FeishuDoc:
             "remove_old_owner": "true" if remove_old_owner else "false",
             "old_owner_perm": old_owner_perm,
         }
-        body = {"member_type": "email", "member_id": email}
+        body = {"member_type": member_type, "member_id": member_id}
         return self._post(path, body=body, params=params)
 
     def _add_children(self, doc_id, parent_id, children):
@@ -410,16 +459,22 @@ class FeishuBoard:
         )
 
 
-def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
+def process_blocks(auth, blocks, folder_token=None, default_owner=None,
+                   default_owner_email=None):
     """Process a list of content blocks, creating docs and boards as needed.
 
     Board blocks are created as embedded whiteboards (block_type 43) inside the
     document, then populated via create_plantuml. This only requires
     docx:document + board:whiteboard:node:create permissions.
 
-    When default_owner_email is provided, ownership of every created document
-    is transferred to that Feishu email immediately after creation.
+    default_owner accepts a typed spec like 'email:x', 'phone:x', 'openid:x'.
+    A bare value is treated as email. The legacy default_owner_email parameter
+    is still accepted for backward compatibility.
+
+    Ownership transfer failures degrade to a warning on the document entry
+    rather than failing the whole run — the document and URL are still returned.
     """
+    owner_spec = default_owner or default_owner_email
     doc_client = FeishuDoc(auth)
     board_client = FeishuBoard(auth)
 
@@ -431,9 +486,15 @@ def process_blocks(auth, blocks, folder_token=None, default_owner_email=None):
         new_id, _ = doc_client.create_document(title, folder_token)
         url = f"https://bytedance.feishu.cn/docx/{new_id}"
         entry = {"id": new_id, "title": title, "url": url}
-        if default_owner_email:
-            doc_client.transfer_owner(new_id, default_owner_email)
-            entry["owner"] = default_owner_email
+        if owner_spec:
+            try:
+                doc_client.transfer_owner(new_id, owner_spec)
+                entry["owner"] = owner_spec
+            except Exception as e:
+                entry["owner_transfer_warning"] = (
+                    f"failed to transfer ownership to {owner_spec!r}: {e}. "
+                    f"Document was still created; it currently belongs to the app."
+                )
         results["documents"].append(entry)
         return new_id
 
@@ -517,7 +578,8 @@ def main():
     p_all = sub.add_parser("create", help="Create document with all block types from JSON")
     p_all.add_argument("--title", required=True)
     p_all.add_argument("--folder-token", default=None)
-    p_all.add_argument("--owner-email", default=None, help="Transfer ownership to this Feishu email after creation")
+    p_all.add_argument("--owner", default=None,
+                       help="Transfer ownership after creation. Format: 'email:x', 'phone:x', 'openid:x', 'userid:x', or bare email.")
     p_all.add_argument("--content-json", help="JSON string of blocks array")
     p_all.add_argument("--content-file", help="Path to JSON file with blocks array")
     p_all.add_argument("--stdin", action="store_true", help="Read content JSON from stdin")
@@ -533,7 +595,7 @@ def main():
         content = _load_content(args)
         blocks_list = content.get("blocks", content if isinstance(content, list) else [])
         blocks = [{"type": "document_title", "text": args.title}] + blocks_list
-        results = process_blocks(auth, blocks, args.folder_token, default_owner_email=args.owner_email)
+        results = process_blocks(auth, blocks, args.folder_token, default_owner=args.owner)
         print(json.dumps(results, ensure_ascii=False, indent=2))
 
 
