@@ -41,7 +41,7 @@ allowed-tools: Read, Write, Bash
 {
     "type": "board",
     "title": "系统架构",
-    "plantuml": "@startuml\n[前端] --> [API]\n[API] --> [数据库]\n@enduml",
+    "plantuml": '@startuml\nrectangle "前端" as frontend\nrectangle "API" as api\nrectangle "数据库" as db\nfrontend --> api\napi --> db\n@enduml',
 }
 ```
 
@@ -130,8 +130,8 @@ blocks = [
 
 | 需要画的图 | PlantUML 写法 |
 |---|---|
-| 架构/组件图 | `@startuml\n[前端] --> [后端]\n[后端] --> [数据库]\n@enduml` |
-| 带标签的连线 | `[A] --> [B] : 调用` |
+| 架构/组件图 | `@startuml\nrectangle "前端" as a\nrectangle "后端" as b\nrectangle "数据库" as c\na --> b\nb --> c\n@enduml` |
+| 带标签的连线 | `rectangle "A" as a\nrectangle "B" as b\na --> b : 调用` |
 | 流程图 | `@startuml\nstart\n:步骤A;\n:步骤B;\nif (条件?) then (是)\n  :分支1;\nelse (否)\n  :分支2;\nendif\nstop\n@enduml` |
 | 时序图 | `@startuml\nAlice -> Bob: 请求\nBob --> Alice: 响应\n@enduml` |
 | 思维导图 | `@startmindmap\n* 根\n** 子1\n** 子2\n@endmindmap` |
@@ -217,7 +217,7 @@ python3 feishu-output/run.py
 
 | 对话中的图形 | PlantUML 图类型 | 起始标签 |
 |---|---|---|
-| 架构图、组件/服务依赖 | 组件图 | `@startuml` + `[A] --> [B]` |
+| 架构图、组件/服务依赖 | 组件图 | `@startuml` + `rectangle "A" as a` + `a --> b` |
 | 从上到下的流程（含判断分支） | 活动图 | `@startuml\nstart ... stop\n@enduml` |
 | 调用顺序、请求/响应 | 时序图 | `@startuml\nAlice -> Bob\n@enduml` |
 | 层级树 / 概念拆解 | 思维导图 | `@startmindmap` + `* 根 ** 子` |
