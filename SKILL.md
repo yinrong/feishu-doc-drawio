@@ -54,25 +54,46 @@ allowed-tools: Read, Write, Bash
 ```json
 {
   "mode": "manual",
-  "default_owner": "phone:18800001234"
+  "default_account": "work",
+  "accounts": {
+    "work": {
+      "app_id": "cli_xxxxxxxxxxxxx",
+      "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+      "default_owner": "email:user@company.com"
+    },
+    "personal": {
+      "app_id": "cli_yyyyyyyyyyyyy",
+      "app_secret": "yyyyyyyyyyyyyyyyyyyyyyyy",
+      "default_owner": "email:me@other.com"
+    }
+  }
 }
 ```
 
 - `mode`：
   - `manual`（默认）：生成文件后展示给用户审查，由用户手动运行
   - `auto`：生成文件后自动执行脚本
-- `default_owner`：文档创建后立即转移所有权给此用户。支持的格式：
+- `default_account`：未指定 account 时使用的账号名；留空则取 accounts 中第一个
+- `accounts`：多账号配置，每个账号包含：
+  - `app_id` / `app_secret` — 飞书应用凭证
+  - `default_owner`（可选）— 该账号专属的默认所有者，覆盖顶层 `default_owner`
+
+`default_owner` 格式：
   - `email:user@company.com` — 飞书企业邮箱
   - `phone:18800001234` — 手机号（内部自动查 open_id 后转移）
   - `openid:ou_xxxx` — open_id
   - `userid:xxxx` / `unionid:on_xxxx`
-  - 裸字符串（无 `:`）默认按 email 处理（向后兼容旧配置 `default_owner_email`）
+  - 裸字符串（无 `:`）默认按 email 处理
 
   转移失败不会让脚本崩溃 —— 文档已创建，URL 一定返回，失败信息以 `owner_transfer_warning` 字段附在 results 里。
 
-如果 config.json 不存在或读取失败，按 `manual` 处理、不转移所有权。
+向后兼容：若配置中没有 `accounts`，`FeishuAuth` 自动回退到环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`。
 
-`run.py` 会从 config 读取这些值并传给共享库，不要在生成的脚本里重复写死。
+**指定账号**：用户调用 `/feishu-doc` 时可在参数开头加 `account:名称`，例如：
+```
+/feishu-doc account:personal 我的周报
+```
+Claude 将解析出账号名写入 `run.py`，其余内容作为文档标题/范围。
 
 ## 工作流程
 
@@ -94,7 +115,9 @@ allowed-tools: Read, Write, Bash
 
 **识别 board 的触发条件**：对话中只要存在"节点 + 连接关系"的意图（不管具体长什么样），就必须生成 `board` 块。拿不准时默认选 `board`，不要选文本。
 
-如果用户在 `/feishu-doc` 后带了参数 (`$ARGUMENTS`)，用参数作为文档标题或过滤导出范围。
+如果用户在 `/feishu-doc` 后带了参数 (`$ARGUMENTS`)：
+- 若参数以 `account:名称` 开头（如 `account:personal 周报`），提取账号名，剩余部分作为文档标题/范围
+- 否则整个参数作为文档标题或过滤导出范围
 
 ### Step 2: 构建 blocks（Python 数据结构）
 
@@ -164,8 +187,8 @@ SKILL_DIR = os.path.expanduser("~/.claude/skills/feishu-doc")
 sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
 from feishu_api import FeishuAuth, process_blocks
 
-with open(os.path.join(SKILL_DIR, "config.json")) as f:
-    config = json.load(f)
+# account 由 Claude 根据 /feishu-doc 参数决定；None 表示使用 default_account
+auth = FeishuAuth(account=None)  # 若用户指定了 account，此处填入账号名字符串
 
 # ============ 文档内容（审查这部分） ============
 blocks = [
@@ -174,11 +197,10 @@ blocks = [
 ]
 # ============ 内容结束 ============
 
-auth = FeishuAuth()
 results = process_blocks(
     auth,
     blocks,
-    default_owner=config.get("default_owner") or config.get("default_owner_email") or None,
+    default_owner=auth.default_owner or None,
 )
 print(json.dumps(results, ensure_ascii=False, indent=2))
 ```

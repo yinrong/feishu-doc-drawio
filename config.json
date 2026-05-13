@@ -1,4 +1,11 @@
 {
   "mode": "manual",
-  "default_owner": ""
+  "default_account": "default",
+  "accounts": {
+    "default": {
+      "app_id": "cli_xxxxxxxxxxxxx",
+      "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+      "default_owner": ""
+    }
+  }
 }

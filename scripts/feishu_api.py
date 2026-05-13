@@ -11,14 +11,66 @@ from urllib.parse import quote
 import requests
 
 BASE_URL = "https://open.feishu.cn/open-apis"
+_SKILL_CONFIG_PATH = os.path.expanduser("~/.claude/skills/feishu-doc/config.json")
+
+
+def _load_skill_config():
+    try:
+        with open(_SKILL_CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 class FeishuAuth:
-    def __init__(self, app_id=None, app_secret=None):
-        self.app_id = app_id or os.environ.get("FEISHU_APP_ID")
-        self.app_secret = app_secret or os.environ.get("FEISHU_APP_SECRET")
-        if not self.app_id or not self.app_secret:
-            raise ValueError("FEISHU_APP_ID and FEISHU_APP_SECRET must be set")
+    """Feishu API credentials.
+
+    Resolution order:
+      1. Explicit app_id / app_secret arguments (or FEISHU_APP_ID / FEISHU_APP_SECRET env vars)
+      2. Named account from config.json  accounts[account]
+      3. Default account (config.json  default_account, or first account)
+
+    After init, auth.default_owner holds the effective owner spec (account-level
+    overrides top-level; empty string means no transfer).
+    """
+
+    def __init__(self, app_id=None, app_secret=None, account=None):
+        env_id = app_id or os.environ.get("FEISHU_APP_ID", "")
+        env_secret = app_secret or os.environ.get("FEISHU_APP_SECRET", "")
+
+        if env_id and env_secret:
+            self.app_id = env_id
+            self.app_secret = env_secret
+            self.default_owner = os.environ.get("FEISHU_DEFAULT_OWNER", "")
+        else:
+            config = _load_skill_config()
+            accounts = config.get("accounts", {})
+            if not accounts:
+                raise ValueError(
+                    "No credentials found. Either set FEISHU_APP_ID / FEISHU_APP_SECRET "
+                    "env vars, or add an 'accounts' section to "
+                    f"{_SKILL_CONFIG_PATH}"
+                )
+            account_name = account or config.get("default_account") or next(iter(accounts))
+            if account_name not in accounts:
+                raise ValueError(
+                    f"Account {account_name!r} not found. "
+                    f"Available accounts: {list(accounts)}"
+                )
+            acc = accounts[account_name]
+            self.app_id = acc.get("app_id", "")
+            self.app_secret = acc.get("app_secret", "")
+            if not self.app_id or not self.app_secret:
+                raise ValueError(
+                    f"Account {account_name!r} is missing app_id or app_secret"
+                )
+            # Account-level default_owner takes precedence over top-level
+            self.default_owner = (
+                acc.get("default_owner")
+                or config.get("default_owner")
+                or ""
+            )
+
         self._token = None
         self._expire_at = 0
 
@@ -580,6 +632,8 @@ def main():
     p_all.add_argument("--folder-token", default=None)
     p_all.add_argument("--owner", default=None,
                        help="Transfer ownership after creation. Format: 'email:x', 'phone:x', 'openid:x', 'userid:x', or bare email.")
+    p_all.add_argument("--account", default=None,
+                       help="Named account from config.json accounts section")
     p_all.add_argument("--content-json", help="JSON string of blocks array")
     p_all.add_argument("--content-file", help="Path to JSON file with blocks array")
     p_all.add_argument("--stdin", action="store_true", help="Read content JSON from stdin")
@@ -589,13 +643,14 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    auth = FeishuAuth()
+    auth = FeishuAuth(account=getattr(args, "account", None))
 
     if args.command == "create":
         content = _load_content(args)
         blocks_list = content.get("blocks", content if isinstance(content, list) else [])
         blocks = [{"type": "document_title", "text": args.title}] + blocks_list
-        results = process_blocks(auth, blocks, args.folder_token, default_owner=args.owner)
+        owner = args.owner or auth.default_owner or None
+        results = process_blocks(auth, blocks, args.folder_token, default_owner=owner)
         print(json.dumps(results, ensure_ascii=False, indent=2))
 
 

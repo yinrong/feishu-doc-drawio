@@ -55,14 +55,26 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 
 安装完成后 **重启 Claude Code**。
 
-## 运行模式与默认所有人
+## 多身份配置
 
-编辑 `~/.claude/skills/feishu-doc/config.json`：
+编辑 `~/.claude/skills/feishu-doc/config.json`，可以配置多个飞书应用账号：
 
 ```json
 {
-  "mode": "manual",
-  "default_owner": "phone:18800001234"
+  "mode": "auto",
+  "default_account": "work",
+  "accounts": {
+    "work": {
+      "app_id": "cli_xxxxxxxxxxxxx",
+      "app_secret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+      "default_owner": "email:me@company.com"
+    },
+    "personal": {
+      "app_id": "cli_yyyyyyyyyyyyy",
+      "app_secret": "yyyyyyyyyyyyyyyyyyyyyyyy",
+      "default_owner": "email:me@other.com"
+    }
+  }
 }
 ```
 
@@ -70,7 +82,16 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 |---|---|
 | `mode: manual`（默认） | 生成文件后停下，你审查 `run.py` 中的 blocks 后手动运行 `python3 feishu-output/run.py` |
 | `mode: auto` | 生成文件后自动运行脚本，直接返回飞书链接 |
-| `default_owner` | 文档创建后立即转移所有权给此用户。支持多种格式（见下） |
+| `default_account` | 默认使用的账号名；留空则取 `accounts` 中第一个 |
+| `accounts` | 账号列表，每个账号有独立的 `app_id`、`app_secret`、`default_owner` |
+
+账号级的 `default_owner` 会覆盖其他默认值。
+
+**指定账号**：在 `/feishu-doc` 参数开头加 `account:名称`：
+
+```
+/feishu-doc account:personal 我的周报
+```
 
 ### `default_owner` 格式
 
@@ -89,28 +110,17 @@ git clone git@github.com:yinrong/feishu-doc-drawio.git ~/.claude/skills/feishu-d
 >
 > 转移失败**不会让脚本崩溃** —— 文档已创建，URL 会正常返回，失败信息以 `owner_transfer_warning` 字段附在 results 里。
 
-> 兼容性：旧的 `default_owner_email` 字段仍然支持（按 email 处理），但建议改用 `default_owner`。
+### 向后兼容
 
-**手动模式运行时**，需要先设置环境变量：
+- 若配置中没有 `accounts`，自动回退到环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
+- 旧的顶层 `default_owner_email` 字段仍然支持（按 email 处理）
+- 手动模式下也可以 export 环境变量后直接运行，不需要配置文件：
 
 ```bash
 export FEISHU_APP_ID="cli_xxxxxxxxxxxxx"
 export FEISHU_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
 python3 feishu-output/run.py
 ```
-
-**自动模式运行时**，需要在 `~/.claude/settings.json` 的 `"env"` 中配置：
-
-```json
-{
-  "env": {
-    "FEISHU_APP_ID": "cli_xxxxxxxxxxxxx",
-    "FEISHU_APP_SECRET": "xxxxxxxxxxxxxxxxxxxxxxxx"
-  }
-}
-```
-
-> `~/.claude/settings.json` 是 Claude Code 的配置文件，位于你的用户主目录下的 `.claude` 文件夹中。如果文件中已有其他配置项，把这两行追加到已有的 `env` 对象中即可。修改后需要 **重启 Claude Code** 生效。
 
 ## 使用
 
